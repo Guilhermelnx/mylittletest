@@ -1,0 +1,62 @@
+import smtplib
+import socket
+from email_validator import validate_email, EmailNotValidError
+
+def validar_email(email, verificar_smtp=False):
+    """
+    Valida um endereço de e-mail com verificação de sintaxe e domínio.
+
+    Args:
+        email: Endereço de e-mail a ser validado
+        verificar_smtp: Se True, faz uma tentativa de conexão SMTP (opcional)
+
+    Returns:
+        bool: True se válido, False se inválido
+    """
+    try:
+        # Valida sintaxe e domínio (inclui verificação de registros MX)
+        email_info = validate_email(email, check_deliverability=True)
+
+        # Verificação opcional de conexão SMTP
+        if verificar_smtp:
+            return verificar_conexao_smtp(email_info.domain)
+
+        return True
+
+    except (EmailNotValidError, socket.gaierror) as e:
+        # Captura erros de validação e DNS
+        return False
+
+def verificar_conexao_smtp(domain, port=25, timeout=5):
+    """Tenta conectar ao servidor SMTP do domínio"""
+    try:
+        # Usando gerenciador de contexto para garantir fechamento da conexão
+        with smtplib.SMTP(timeout=timeout) as server:
+            server.connect(host=domain, port=port)
+            server.quit()  # Encerra conexão adequadamente
+        return True
+    except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected,
+            smtplib.SMTPException, socket.timeout, socket.gaierror,
+            ConnectionRefusedError, OSError) as e:
+        return False
+
+if __name__ == "__main__":
+    # Testes com diferentes cenários
+    test_emails = [
+        "exemplo@gmail.com",        # Válido
+        "invalido@dominio_inexistente.xyz",  # Inválido
+        "formato_invalido.com",     # Sintaxe errada
+        "usuario@exemplo.com.br",   # Válido
+    ]
+
+    print("Validação básica (sintaxe + domínio):")
+    for email in test_emails:
+        valido = validar_email(email)
+        status = "✅ VÁLIDO" if valido else "❌ INVÁLIDO"
+        print(f"{email.ljust(35)} -> {status}")
+
+    print("\nValidação com SMTP (conexão ao servidor):")
+    for email in test_emails:
+        valido = validar_email(email, verificar_smtp=True)
+        status = "✅ VÁLIDO" if valido else "❌ INVÁLIDO"
+        print(f"{email.ljust(35)} -> {status}")
