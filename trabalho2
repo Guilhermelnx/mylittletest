@@ -1,0 +1,104 @@
+import smtplib
+import socket
+import secrets
+import time
+from email_validator import validate_email, EmailNotValidError
+from email.mime.text import MIMEText
+
+# Configurações do servidor SMTP (substitua com suas credenciais)
+SMTP_SERVER = "smtp.seu_provedor.com"
+SMTP_PORT = 587
+SMTP_USER = "seu_email@exemplo.com"
+SMTP_PASSWORD = "sua_senha"
+
+# Dicionário para armazenar códigos de verificação (em produção, use banco de dados)
+codigos_verificacao = {}
+
+def validar_formato_email(email):
+    """Valida apenas o formato e domínio do e-mail"""
+    try:
+        validate_email(email, check_deliverability=True)
+        return True
+    except (EmailNotValidError, socket.gaierror):
+        return False
+
+def enviar_codigo_verificacao(email):
+    """
+    Envia um código de verificação para o e-mail fornecido
+    
+    Retorna:
+        Tuple: (sucesso: bool, codigo: str)
+    """
+    # Gera um código aleatório de 6 dígitos
+    codigo = str(secrets.randbelow(10**6)).zfill(6)
+    
+    # Armazena o código com timestamp de expiração (5 minutos)
+    codigos_verificacao[email] = (codigo, time.time() + 300)
+    
+    # Cria a mensagem de e-mail
+    mensagem = MIMEText(f"Seu código de verificação é: {codigo}\n\nEste código expira em 5 minutos.")
+    mensagem['Subject'] = 'Código de Verificação'
+    mensagem['From'] = SMTP_USER
+    mensagem['To'] = email
+    
+    try:
+        # Envia o e-mail
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(mensagem)
+        return True, codigo
+    except smtplib.SMTPException as e:
+        print(f"Erro ao enviar e-mail: {e}")
+        return False, None
+
+def verificar_codigo(email, codigo):
+    """Verifica se o código fornecido corresponde ao e-mail"""
+    if email not in codigos_verificacao:
+        return False
+    
+    codigo_armazenado, expiracao = codigos_verificacao[email]
+    
+    # Verifica se o código expirou
+    if time.time() > expiracao:
+        del codigos_verificacao[email]
+        return False
+    
+    # Verifica se o código está correto
+    if codigo == codigo_armazenado:
+        del codigos_verificacao[email]
+        return True
+    
+    return False
+
+# Exemplo de fluxo completo de validação
+def registrar_usuario():
+    # Passo 1: Usuário informa o e-mail
+    email = input("Digite seu e-mail: ").strip().lower()
+    
+    # Passo 2: Validação inicial do formato
+    if not validar_formato_email(email):
+        print("Formato de e-mail inválido ou domínio inexistente.")
+        return
+    
+    # Passo 3: Envio do código de verificação
+    sucesso, _ = enviar_codigo_verificacao(email)
+    if not sucesso:
+        print("Falha ao enviar o código de verificação. Tente novamente.")
+        return
+    
+    print("Código de verificação enviado para seu e-mail!")
+    
+    # Passo 4: Usuário informa o código recebido
+    codigo = input("Digite o código recebido: ").strip()
+    
+    # Passo 5: Verificação do código
+    if verificar_codigo(email, codigo):
+        print("E-mail verificado com sucesso! Cadastro completo.")
+        # Aqui você salvaria o usuário no banco de dados
+    else:
+        print("Código inválido ou expirado. Por favor, tente novamente.")
+
+# Executar o fluxo de registro
+if __name__ == "__main__":
+    registrar_usuario()
