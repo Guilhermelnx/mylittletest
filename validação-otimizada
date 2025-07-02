@@ -1,0 +1,121 @@
+import os
+import smtplib
+import secrets
+import time
+from email_validator import validate_email, EmailNotValidError
+from email.mime.text import MIMEText
+from typing import Tuple, Dict, Optional
+
+  # Configurações via variáveis de ambiente (mais seguro)
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.seu_provedor.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SMTP_USER = os.getenv("SMTP_USER", "seu_email@exemplo.com")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "sua_senha")
+
+  # Dicionário para armazenar códigos de verificação
+codigos_verificacao: Dict[str, Tuple[str, float]] = {}
+
+def validar_formato_email(email: str) -> bool:
+      """Valida formato e domínio do e-mail com cache DNS temporário"""
+      try:
+          validate_email(
+              email,
+              check_deliverability=True,
+              dns_resolver=None  # Usa cache interno temporário
+          )
+          return True
+      except (EmailNotValidError, socket.gaierror):
+          return False
+
+def enviar_codigo_verificacao(email: str) -> Tuple[bool, Optional[str]]:
+      """Envia código de verificação com tratamento robusto de erros"""
+      codigo = secrets.token_urlsafe(9)[:6].upper()
+      expiracao = time.time() + 300  # 5 minutos
+
+      # Remove códigos antigos antes de adicionar novo
+      remover_codigos_expirados()
+      codigos_verificacao[email] = (codigo, expiracao)
+
+      mensagem = MIMEText(f"""Seu código de verificação é: {codigo}
+  Este código expira em 5 minutos.""")
+      mensagem['Subject'] = 'Código de Verificação'
+      mensagem['From'] = SMTP_USER
+      mensagem['To'] = email
+
+      try:
+          with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as server:
+              server.starttls()
+              server.login(SMTP_USER, SMTP_PASSWORD)
+              server.send_message(mensagem)
+          return True, codigo
+      except smtplib.SMTPException as e:
+          print(f"Erro SMTP: {e}")
+      except (socket.gaierror, socket.timeout) as e:
+          print(f"Erro de conexão: {e}")
+      except Exception as e:
+          print(f"Erro inesperado: {e}")
+
+      # Remove código se falhar no envio
+      if email in codigos_verificacao:
+          del codigos_verificacao[email]
+      return False, None
+
+def remover_codigos_expirados():
+      """Remove códigos expirados do dicionário"""
+      agora = time.time()
+      emails_excluir = [email for email, (_, exp) in codigos_verificacao.items() if exp < agora]
+
+      for email in emails_excluir:
+          del codigos_verificacao[email]
+
+def verificar_codigo(email: str, codigo: str) -> bool:
+      """Verifica o código com limpeza automática de expirados"""
+      remover_codigos_expirados()
+
+      if email not in codigos_verificacao:
+          return False
+
+      codigo_armazenado, expiracao = codigos_verificacao[email]
+
+      # Remove código independente do resultado
+      del codigos_verificacao[email]
+
+      if time.time() > expiracao:
+          return False
+
+      return secrets.compare_digest(codigo.upper(), codigo_armazenado)
+
+def registrar_usuario():
+      """Fluxo otimizado de registro com tentativas limitadas"""
+      tentativas = 3
+
+      while tentativas > 0:
+          email = input("Digite seu e-mail: ").strip().lower()
+
+          if not validar_formato_email(email):
+              print("Formato de e-mail inválido ou domínio inexistente.")
+              tentativas -= 1
+              continue
+
+          sucesso, _ = enviar_codigo_verificacao(email)
+          if not sucesso:
+              print("Falha no envio. Verifique o e-mail ou tente novamente.")
+              tentativas -= 1
+              continue
+
+          print("Código enviado! Verifique sua caixa de entrada e spam.")
+
+          for tentativa in range(3, 0, -1):
+              codigo = input(f"Digite o código ({tentativa} tentativas): ").strip()
+              if verificar_codigo(email, codigo):
+                  print("E-mail verificado! Cadastro concluído.")
+                  return
+              print(f"Código inválido. {tentativa-1} tentativas restantes.")
+
+          print("Limite de tentativas excedido.")
+          return
+
+      print("Limite de erros no e-mail atingido.")
+
+if __name__ == "__main__":
+      registrar_usuario()
